@@ -1,0 +1,54 @@
+# FastAPI and web framework
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+python-multipart==0.0.6
+
+# Database
+sqlalchemy==2.0.23
+psycopg2-binary==2.9.9
+alembic==1.12.1
+
+# Authentication and security
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+python-multipart==0.0.6
+
+# AI and ML
+groq==0.4.1
+requests==2.31.0
+
+# File processing
+PyPDF2==3.0.1
+python-docx==1.1.0
+docx2txt==0.8
+
+# Payment processing
+stripe==7.8.0
+
+# Data validation and serialization (align with pydantic-settings>=2.7 requirement)
+pydantic==2.7.4
+pydantic[email]==2.7.4
+
+# Environment and configuration
+python-dotenv==1.0.0
+
+# HTTP client
+httpx==0.25.2
+
+# Date and time
+python-dateutil==2.8.2
+
+# Logging and monitoring
+structlog==23.2.0
+
+# CORS (handled by FastAPI)
+
+# Development and testing
+pytest==7.4.3
+pytest-asyncio==0.21.1
+black==23.11.0
+flake8==6.1.0
+mypy==1.7.1
+
+# Production
+gunicorn==21.2.0
