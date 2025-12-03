@@ -4,6 +4,8 @@ Logging configuration for JobAlign AI Backend
 
 import logging
 import sys
+import os
+import io
 from datetime import datetime
 from typing import Optional
 
@@ -23,13 +25,23 @@ def get_logger(name: str, level: str = "INFO") -> logging.Logger:
         datefmt='%Y-%m-%d %H:%M:%S'
     )
     
-    # Console handler
-    console_handler = logging.StreamHandler(sys.stdout)
+    # Console handler with UTF-8 encoding (Windows-safe)
+    stream = sys.stdout
+    try:
+        # Wrap stdout to force UTF-8 and avoid cp1252 encode errors on Windows
+        if hasattr(sys.stdout, "buffer"):
+            stream = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+    except Exception:
+        stream = sys.stdout
+    console_handler = logging.StreamHandler(stream)
     console_handler.setLevel(logging.INFO)
     console_handler.setFormatter(formatter)
     
     # File handler (optional)
-    file_handler = logging.FileHandler(f'logs/jobalign_{datetime.now().strftime("%Y%m%d")}.log')
+    os.makedirs('logs', exist_ok=True)
+    file_handler = logging.FileHandler(
+        f'logs/jobalign_{datetime.now().strftime("%Y%m%d")}.log', encoding="utf-8"
+    )
     file_handler.setLevel(logging.DEBUG)
     file_handler.setFormatter(formatter)
     

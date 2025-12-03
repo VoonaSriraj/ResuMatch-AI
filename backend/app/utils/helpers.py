@@ -79,7 +79,7 @@ def extract_skills_from_text(text: str) -> List[str]:
         if m.lower() not in {x.lower() for x in normalized} and len(normalized) < 100:
             normalized.add(m)
 
-    return list(skills)
+    return list(normalized)
 
 def calculate_match_percentage(matching_items: List[str], total_items: List[str]) -> float:
     """Calculate match percentage between two lists"""
@@ -88,6 +88,64 @@ def calculate_match_percentage(matching_items: List[str], total_items: List[str]
     
     matching_count = len(set(matching_items) & set(total_items))
     return (matching_count / len(total_items)) * 100
+
+def extract_years_of_experience(text: str) -> Optional[int]:
+    """Extract an approximate years-of-experience number from text.
+    Looks for patterns like '3 years', '5+ years', '7 yrs', '2-4 years'.
+    Returns the maximum found to represent total/required years.
+    """
+    if not text:
+        return None
+    patterns = [
+        r"(\d+)\s*\+?\s*(?:years|year|yrs|yr)",
+        r"(\d+)\s*[-–]\s*(\d+)\s*(?:years|year|yrs|yr)",
+    ]
+    years: List[int] = []
+    for pat in patterns:
+        for m in re.finditer(pat, text, re.IGNORECASE):
+            try:
+                if len(m.groups()) >= 2 and m.group(2):
+                    years.append(max(int(m.group(1)), int(m.group(2))))
+                else:
+                    years.append(int(m.group(1)))
+            except Exception:
+                continue
+    if not years:
+        return None
+    return max(y for y in years if y is not None)
+
+def extract_role_tokens(text: str) -> List[str]:
+    """Extract simple role/title tokens from text."""
+    if not text:
+        return []
+    role_words = [
+        "engineer", "developer", "manager", "lead", "architect", "analyst",
+        "scientist", "consultant", "specialist", "admin", "administrator",
+        "product", "program", "project", "designer", "devops", "sre",
+        "frontend", "backend", "fullstack", "data", "ml", "ai", "qa", "test"
+    ]
+    tokens = set()
+    lower = text.lower()
+    for w in role_words:
+        if w in lower:
+            tokens.add(w)
+    return list(tokens)
+
+def extract_domain_keywords(text: str) -> List[str]:
+    """Extract coarse domain keywords to estimate domain relevance."""
+    if not text:
+        return []
+    domains = [
+        "fintech", "healthcare", "ecommerce", "e-commerce", "retail", "logistics",
+        "cloud", "saas", "banking", "insurance", "telecom", "education",
+        "gaming", "media", "adtech", "security", "iot", "automotive"
+    ]
+    tokens = set()
+    lower = text.lower()
+    for d in domains:
+        if d in lower:
+            tokens.add(d)
+    return list(tokens)
 
 def format_currency(amount: int, currency: str = "USD") -> str:
     """Format currency amount for display"""
@@ -183,14 +241,29 @@ def format_ai_prompt(prompt_type: str, **kwargs) -> str:
         {job_text}
         
         Provide JSON with:
-        1. overall_match_score (0-100)
-        2. skills_match_score (0-100)
-        3. experience_match_score (0-100)
-        4. missing_keywords: List of important keywords missing from resume
-        5. matching_keywords: List of keywords that match
-        6. suggestions: List of improvement suggestions
+        1. overall_match_score (0-100): Overall compatibility score
+        2. skills_match_score (0-100): How well resume skills match job requirements
+        3. experience_match_score (0-100): How well resume experience matches job requirements
+        4. keywords_match_score (0-100): Percentage of important keywords from JD found in resume
+        5. missing_keywords: List of important keywords missing from resume (max 25)
+        6. matching_keywords: List of keywords that match between resume and JD (max 25)
+        7. suggestions: List of specific, actionable improvement suggestions (3-5 items)
+        8. ats_findings: List of ATS (Applicant Tracking System) friendliness findings and recommendations (3-5 items)
+        9. readability: List of readability and structure recommendations (3-5 items)
+        10. strengths: List of resume strengths and highlights specific to this job (2-4 items)
         
+        Be specific and actionable. Base scores on actual comparison between resume and job description.
         Return only valid JSON.
+        """,
+        "interview_tech_questions_only": """
+        Read the following job description and output ONLY JSON with one key: technical_questions.
+        The value must be a list of 10-15 concise technical questions tailored to the JD (tools, systems, domain).
+
+        Job Description:
+        {job_text}
+
+        Output format example:
+        {"technical_questions": ["Question 1", "Question 2", "..."]}
         """,
         
         "resume_optimization": """
@@ -212,18 +285,73 @@ def format_ai_prompt(prompt_type: str, **kwargs) -> str:
         """,
         
         "interview_questions": """
-        Generate interview questions based on this job description. Create questions for different categories.
+        You are a senior interviewer. Read the job description and generate practical interview questions.
         
         Job Description:
         {job_text}
         
-        Provide JSON with categories:
-        1. technical_questions: Technical/skill-based questions
-        2. behavioral_questions: Behavioral/situational questions
-        3. company_culture_questions: Company and culture questions
-        4. leadership_questions: Leadership and management questions (if applicable)
-        5. tips: Interview preparation tips
+        Output STRICTLY valid JSON with these keys ONLY:
+        - technical_questions: 10-15 concise, role-specific questions (focus on tools, systems, problem-solving). REQUIRED.
+        - behavioral_questions: 3-5 questions (use STAR-friendly prompts). REQUIRED.
+        - company_culture_questions: 3-4 questions tailored to the org/team context. REQUIRED.
+        - leadership_questions: 2-4 questions IF the role implies senior/lead/manager; otherwise return an empty list.
+        - tips: 3-5 short preparation tips.
         
+        Rules:
+        - Base questions on the actual job text (skills, stack, domain). Do NOT return empty lists unless truly no context exists.
+        - Questions must be strings only; avoid numbering or extra formatting.
+        - Keep each question under 22 words.
+        
+        Return only valid JSON.
+        """
+        ,
+        "interview_qa_from_jd": """
+        You are a senior interviewer. Read the job description and produce targeted interview preparation.
+
+        Job Description:
+        {job_text}
+
+        Requirements:
+        1) Extract these lists from the JD:
+           - core_skills (technical competencies)
+           - languages (programming/query)
+           - tools_frameworks
+           - key_responsibilities
+        2) Generate 10–15 technical interview questions grounded in the JD.
+        3) For each question, provide a short, high-quality sample answer that demonstrates hands-on understanding using correct technical terms and realistic project context.
+        4) If the JD is specialized (Data Science/AI/Cloud/etc.), ensure questions reflect that domain.
+
+        Output STRICTLY valid JSON with keys:
+        - extracted: {"core_skills":[], "languages":[], "tools_frameworks":[], "key_responsibilities":[]}
+        - qa: [{"question":"...","sample_answer":"..."}]   // 10–15 entries
+
+        Rules:
+        - All strings should be concise and practical (answers 2–6 sentences).
+        - No markdown, numbering, or extra commentary outside JSON.
+        """,
+        "resume_ats_evaluation": """
+        You are an expert ATS evaluator. Analyze the following single resume and score it STRICTLY by this rubric.
+
+        Scoring Breakdown (0-100 each):
+        - Structure & Formatting (25%): Clear section headings (Summary, Skills, Experience, Education, Projects). No tables, columns, or graphics.
+        - Keyword Coverage (25%): Uses action-oriented, professional, and technical terms (e.g., implemented, optimized, analysis, leadership, teamwork, Python, SQL).
+        - Skill Presentation (20%): Skills are clearly listed and reflected in the experience section.
+        - Readability (15%): Sentences are concise, grammatically correct, and use consistent bullets.
+        - Achievements & Metrics (15%): Presence of quantifiable results, impact statements, or metrics.
+
+        Overall ATS Score formula:
+        overall = 0.25*structure + 0.25*keyword + 0.20*skills + 0.15*readability + 0.15*impact
+
+        Output Requirements:
+        - Return ONLY valid JSON with the following keys exactly:
+          structure_score, keyword_score, skills_score, readability_score, impact_score, overall_ats_score, strengths, weaknesses
+        - All scores must be numbers between 0 and 100 (no strings). Do not default to 50; base scores on evidence in the resume text.
+        - strengths: 2-3 concise, resume-specific positives (no generic fluff)
+        - weaknesses: 3-5 specific, actionable improvements tailored to the resume
+
+        Resume Text:
+        {resume_text}
+
         Return only valid JSON.
         """
     }
