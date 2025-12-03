@@ -12,7 +12,9 @@ import RecommendedJobs from "./pages/RecommendedJobs";
 import Settings from "./pages/Settings";
 import NotFound from "./pages/NotFound";
 import Login from "./pages/Login";
+import SignIn from "./pages/SignIn";
 import OAuthCallback from "./pages/OAuthCallback";
+import SignUp from "./pages/SignUp";
 
 const queryClient = new QueryClient();
 
@@ -31,8 +33,11 @@ const App = () => (
             <Route path="/recommended-jobs" element={<RecommendedJobs />} />
             <Route path="/settings" element={<Settings />} />
             <Route path="/login" element={<Login />} />
+            <Route path="/sign-in" element={<SignIn />} />
+            <Route path="/sign-up" element={<SignUp />} />
             <Route path="/auth/google/callback" element={<OAuthCallback />} />
             <Route path="/auth/github/callback" element={<OAuthCallback />} />
+            <Route path="/auth/linkedin/callback" element={<OAuthCallback />} />
             <Route path="*" element={<NotFound />} />
           </Routes>
         </Layout>
