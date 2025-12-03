@@ -19,9 +19,13 @@ from app.api import (
     generate_interview_questions,
     recommended_jobs,
     linkedin_connect,
-    stripe_webhook
+    stripe_webhook,
+    job_recommendations,
+    jobs,
+    dashboard
 )
 from app.models import user, resume, job, match_history, subscription, activity_log
+from app.models.job_recommendations import Job, UserProfile
 from app.database import engine, Base
 from sqlalchemy import text
 from app.utils.logger import get_logger
@@ -49,7 +53,14 @@ app = FastAPI(
 # CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Configure appropriately for production
+    allow_origins=[
+        "http://localhost:8080",  # Your frontend URL
+        "http://127.0.0.1:8080",  # Alternative localhost
+        "http://localhost:3000",  # Common frontend port
+        "http://127.0.0.1:3000",  # Alternative localhost
+        "http://localhost:8081",  # Your frontend URL
+        "http://127.0.0.1:8081",  # Alternative localhost
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -68,6 +79,8 @@ app.include_router(generate_interview_questions.router, prefix="/api/interview",
 app.include_router(recommended_jobs.router, prefix="/api/recommendations", tags=["Recommendations"])
 app.include_router(linkedin_connect.router, prefix="/api/linkedin", tags=["LinkedIn"])
 app.include_router(stripe_webhook.router, prefix="/api/stripe", tags=["Stripe"])
+app.include_router(job_recommendations.router, tags=["Job Recommendations"])
+app.include_router(dashboard.router, tags=["Dashboard"])
 
 @app.get("/")
 async def root():
