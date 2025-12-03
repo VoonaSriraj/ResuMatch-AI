@@ -16,6 +16,7 @@ from app.utils.auth import get_current_active_user
 from app.services.resume_parser import resume_parser_service
 from app.utils.logger import get_logger
 from app.config import settings
+import json as _json
 
 router = APIRouter()
 logger = get_logger(__name__)
@@ -41,6 +42,33 @@ class ResumeUploadResponse(BaseModel):
 class ResumeListResponse(BaseModel):
     resumes: List[ResumeResponse]
     total_count: int
+
+# Helper function to parse JSON strings back to lists
+def parse_json_field(value):
+    if value is None:
+        return None
+    if isinstance(value, str):
+        try:
+            return _json.loads(value)
+        except (_json.JSONDecodeError, TypeError):
+            return []
+    return value
+
+# Helper function to create ResumeResponse with proper JSON parsing
+def create_resume_response(resume: Resume) -> ResumeResponse:
+    return ResumeResponse(
+        id=resume.id,
+        filename=resume.filename,
+        file_type=resume.file_type,
+        file_size=resume.file_size,
+        processing_status=resume.processing_status,
+        upload_date=resume.upload_date.isoformat(),
+        parsed_skills=parse_json_field(resume.parsed_skills),
+        parsed_experience=parse_json_field(resume.parsed_experience),
+        parsed_education=parse_json_field(resume.parsed_education),
+        parsed_certifications=parse_json_field(resume.parsed_certifications),
+        parsed_achievements=parse_json_field(resume.parsed_achievements)
+    )
 
 @router.post("/upload", response_model=ResumeUploadResponse)
 async def upload_resume(
@@ -115,11 +143,22 @@ async def upload_resume(
                             out.append(str(item))
                 return out
 
-            resume.parsed_skills = _to_string_list(parsed_data.get("skills"))
-            resume.parsed_experience = _to_string_list(parsed_data.get("experience"))
-            resume.parsed_education = _to_string_list(parsed_data.get("education"))
-            resume.parsed_certifications = _to_string_list(parsed_data.get("certifications"))
-            resume.parsed_achievements = _to_string_list(parsed_data.get("achievements"))
+            # Ensure data is properly serialized for SQLite
+            def ensure_json_string(value):
+                if value is None:
+                    return None
+                if isinstance(value, str):
+                    return value  # Already serialized
+                elif isinstance(value, list):
+                    return _json.dumps(value, ensure_ascii=False)
+                else:
+                    return _json.dumps([str(value)], ensure_ascii=False)
+            
+            resume.parsed_skills = ensure_json_string(parsed_data.get("skills"))
+            resume.parsed_experience = ensure_json_string(parsed_data.get("experience"))
+            resume.parsed_education = ensure_json_string(parsed_data.get("education"))
+            resume.parsed_certifications = ensure_json_string(parsed_data.get("certifications"))
+            resume.parsed_achievements = ensure_json_string(parsed_data.get("achievements"))
             
             db.commit()
             db.refresh(resume)
@@ -138,19 +177,7 @@ async def upload_resume(
             
             return ResumeUploadResponse(
                 message="Resume uploaded and parsed successfully",
-                resume=ResumeResponse(
-                    id=resume.id,
-                    filename=resume.filename,
-                    file_type=resume.file_type,
-                    file_size=resume.file_size,
-                    processing_status=resume.processing_status,
-                    upload_date=resume.upload_date.isoformat(),
-                    parsed_skills=resume.parsed_skills,
-                    parsed_experience=resume.parsed_experience,
-                    parsed_education=resume.parsed_education,
-                    parsed_certifications=resume.parsed_certifications,
-                    parsed_achievements=resume.parsed_achievements
-                )
+                resume=create_resume_response(resume)
             )
             
         except Exception as e:
@@ -212,13 +239,24 @@ async def upload_resume_text(
             resume.extracted_text = processing_result.get("extracted_text")
             resume.processing_status = "completed"
             
-            # Extract parsed data
+            # Extract parsed data and ensure proper serialization for SQLite
             parsed_data = processing_result.get("parsed_data", {})
-            resume.parsed_skills = parsed_data.get("skills", [])
-            resume.parsed_experience = parsed_data.get("experience", [])
-            resume.parsed_education = parsed_data.get("education", [])
-            resume.parsed_certifications = parsed_data.get("certifications", [])
-            resume.parsed_achievements = parsed_data.get("achievements", [])
+            
+            def ensure_json_string(value):
+                if value is None:
+                    return None
+                if isinstance(value, str):
+                    return value  # Already serialized
+                elif isinstance(value, list):
+                    return _json.dumps(value, ensure_ascii=False)
+                else:
+                    return _json.dumps([str(value)], ensure_ascii=False)
+            
+            resume.parsed_skills = ensure_json_string(parsed_data.get("skills"))
+            resume.parsed_experience = ensure_json_string(parsed_data.get("experience"))
+            resume.parsed_education = ensure_json_string(parsed_data.get("education"))
+            resume.parsed_certifications = ensure_json_string(parsed_data.get("certifications"))
+            resume.parsed_achievements = ensure_json_string(parsed_data.get("achievements"))
             
             db.commit()
             db.refresh(resume)
@@ -237,19 +275,7 @@ async def upload_resume_text(
             
             return ResumeUploadResponse(
                 message="Resume text uploaded and parsed successfully",
-                resume=ResumeResponse(
-                    id=resume.id,
-                    filename=resume.filename,
-                    file_type=resume.file_type,
-                    file_size=None,
-                    processing_status=resume.processing_status,
-                    upload_date=resume.upload_date.isoformat(),
-                    parsed_skills=resume.parsed_skills,
-                    parsed_experience=resume.parsed_experience,
-                    parsed_education=resume.parsed_education,
-                    parsed_certifications=resume.parsed_certifications,
-                    parsed_achievements=resume.parsed_achievements
-                )
+                resume=create_resume_response(resume)
             )
             
         except Exception as e:
@@ -284,19 +310,7 @@ async def list_resumes(
         ).order_by(Resume.upload_date.desc()).all()
         
         resume_responses = [
-            ResumeResponse(
-                id=resume.id,
-                filename=resume.filename,
-                file_type=resume.file_type,
-                file_size=resume.file_size,
-                processing_status=resume.processing_status,
-                upload_date=resume.upload_date.isoformat(),
-                parsed_skills=resume.parsed_skills,
-                parsed_experience=resume.parsed_experience,
-                parsed_education=resume.parsed_education,
-                parsed_certifications=resume.parsed_certifications,
-                parsed_achievements=resume.parsed_achievements
-            )
+            create_resume_response(resume)
             for resume in resumes
         ]
         
@@ -331,19 +345,7 @@ async def get_resume(
                 detail="Resume not found"
             )
         
-        return ResumeResponse(
-            id=resume.id,
-            filename=resume.filename,
-            file_type=resume.file_type,
-            file_size=resume.file_size,
-            processing_status=resume.processing_status,
-            upload_date=resume.upload_date.isoformat(),
-            parsed_skills=resume.parsed_skills,
-            parsed_experience=resume.parsed_experience,
-            parsed_education=resume.parsed_education,
-            parsed_certifications=resume.parsed_certifications,
-            parsed_achievements=resume.parsed_achievements
-        )
+        return create_resume_response(resume)
         
     except HTTPException:
         raise

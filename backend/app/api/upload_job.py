@@ -48,6 +48,49 @@ class JobListResponse(BaseModel):
     jobs: List[JobResponse]
     total_count: int
 
+# Helper function to parse JSON strings back to lists
+def parse_json_field(value):
+    if value is None:
+        return None
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+            # If it's a list of dictionaries, extract the values as strings
+            if isinstance(parsed, list):
+                result = []
+                for item in parsed:
+                    if isinstance(item, dict):
+                        # Convert dict to a readable string
+                        result.append(str(item))
+                    else:
+                        result.append(str(item))
+                return result
+            return parsed
+        except (json.JSONDecodeError, TypeError):
+            return []
+    return value
+
+# Helper function to create JobResponse with proper JSON parsing
+def create_job_response(job: JobDescription) -> JobResponse:
+    return JobResponse(
+        id=job.id,
+        title=job.title,
+        company=job.company,
+        location=job.location,
+        source_link=job.source_link,
+        source_type=job.source_type,
+        processing_status=job.processing_status,
+        created_at=job.created_at.isoformat(),
+        extracted_skills=parse_json_field(job.extracted_skills),
+        experience_requirements=parse_json_field(job.experience_requirements),
+        education_requirements=parse_json_field(job.education_requirements),
+        required_certifications=parse_json_field(job.required_certifications),
+        salary_range=job.salary_range,
+        job_type=job.job_type,
+        seniority_level=job.seniority_level,
+        remote_friendly=job.remote_friendly
+    )
+
 @router.post("/upload", response_model=JobUploadResponse)
 async def upload_job_file(
     file: UploadFile = File(...),
@@ -105,25 +148,35 @@ async def upload_job_file(
             # Extract parsed data (coerce to arrays of strings for PostgreSQL ARRAY columns)
             parsed_data = processing_result.get("parsed_data", {})
 
-            def to_string_list(value):
+            def to_json_string(value):
                 if value is None:
-                    return []
-                result = []
-                for item in (value if isinstance(value, list) else [value]):
-                    if isinstance(item, (str, int, float)):
-                        result.append(str(item))
-                    else:
-                        # For dicts/objects, store JSON string
-                        try:
-                            result.append(json.dumps(item, ensure_ascii=False))
-                        except Exception:
-                            result.append(str(item))
-                return result
+                    return None
+                if isinstance(value, list):
+                    return json.dumps(value, ensure_ascii=False)
+                elif isinstance(value, (str, int, float)):
+                    return json.dumps([str(value)], ensure_ascii=False)
+                else:
+                    # For dicts/objects, store as JSON string
+                    try:
+                        return json.dumps(value, ensure_ascii=False)
+                    except Exception:
+                        return json.dumps([str(value)], ensure_ascii=False)
 
-            job.extracted_skills = to_string_list(parsed_data.get("required_skills"))
-            job.experience_requirements = to_string_list(parsed_data.get("experience_requirements"))
-            job.education_requirements = to_string_list(parsed_data.get("education_requirements"))
-            job.required_certifications = to_string_list(parsed_data.get("certifications"))
+            # Ensure data is properly serialized for SQLite
+            def ensure_json_string(value):
+                if value is None:
+                    return None
+                if isinstance(value, str):
+                    return value  # Already serialized
+                elif isinstance(value, list):
+                    return json.dumps(value, ensure_ascii=False)
+                else:
+                    return json.dumps([str(value)], ensure_ascii=False)
+            
+            job.extracted_skills = ensure_json_string(parsed_data.get("extracted_skills"))
+            job.experience_requirements = ensure_json_string(parsed_data.get("experience_requirements"))
+            job.education_requirements = ensure_json_string(parsed_data.get("education_requirements"))
+            job.required_certifications = ensure_json_string(parsed_data.get("required_certifications"))
 
             # Extract job details
             job_details = parsed_data.get("job_details", {})
@@ -150,24 +203,7 @@ async def upload_job_file(
             
             return JobUploadResponse(
                 message="Job description uploaded and parsed successfully",
-                job=JobResponse(
-                    id=job.id,
-                    title=job.title,
-                    company=job.company,
-                    location=job.location,
-                    source_link=job.source_link,
-                    source_type=job.source_type,
-                    processing_status=job.processing_status,
-                    created_at=job.created_at.isoformat(),
-                    extracted_skills=job.extracted_skills,
-                    experience_requirements=job.experience_requirements,
-                    education_requirements=job.education_requirements,
-                    required_certifications=job.required_certifications,
-                    salary_range=job.salary_range,
-                    job_type=job.job_type,
-                    seniority_level=job.seniority_level,
-                    remote_friendly=job.remote_friendly
-                )
+                job=create_job_response(job)
             )
             
         except Exception as e:
@@ -226,26 +262,36 @@ async def upload_job_text(
             processing_status="completed"
         )
 
-        # Coerce parsed arrays to string lists
-        def to_string_list(value):
+        # Coerce parsed arrays to JSON strings
+        def to_json_string(value):
             if value is None:
-                return []
-            out = []
-            for item in (value if isinstance(value, list) else [value]):
-                if isinstance(item, (str, int, float)):
-                    out.append(str(item))
-                else:
-                    try:
-                        out.append(json.dumps(item, ensure_ascii=False))
-                    except Exception:
-                        out.append(str(item))
-            return out
+                return None
+            if isinstance(value, list):
+                return json.dumps(value, ensure_ascii=False)
+            elif isinstance(value, (str, int, float)):
+                return json.dumps([str(value)], ensure_ascii=False)
+            else:
+                try:
+                    return json.dumps(value, ensure_ascii=False)
+                except Exception:
+                    return json.dumps([str(value)], ensure_ascii=False)
 
+        # Ensure data is properly serialized for SQLite
+        def ensure_json_string(value):
+            if value is None:
+                return None
+            if isinstance(value, str):
+                return value  # Already serialized
+            elif isinstance(value, list):
+                return json.dumps(value, ensure_ascii=False)
+            else:
+                return json.dumps([str(value)], ensure_ascii=False)
+        
         parsed_data = processing_result.get("parsed_data", {})
-        job.extracted_skills = to_string_list(parsed_data.get("required_skills"))
-        job.experience_requirements = to_string_list(parsed_data.get("experience_requirements"))
-        job.education_requirements = to_string_list(parsed_data.get("education_requirements"))
-        job.required_certifications = to_string_list(parsed_data.get("certifications"))
+        job.extracted_skills = ensure_json_string(parsed_data.get("extracted_skills"))
+        job.experience_requirements = ensure_json_string(parsed_data.get("experience_requirements"))
+        job.education_requirements = ensure_json_string(parsed_data.get("education_requirements"))
+        job.required_certifications = ensure_json_string(parsed_data.get("required_certifications"))
 
         job_details = parsed_data.get("job_details", {})
         job.salary_range = job_details.get("salary_range")
@@ -271,24 +317,7 @@ async def upload_job_text(
 
         return JobUploadResponse(
             message="Job description text uploaded and parsed successfully",
-            job=JobResponse(
-                id=job.id,
-                title=job.title,
-                company=job.company,
-                location=job.location,
-                source_link=job.source_link,
-                source_type=job.source_type,
-                processing_status=job.processing_status,
-                created_at=job.created_at.isoformat(),
-                extracted_skills=job.extracted_skills,
-                experience_requirements=job.experience_requirements,
-                education_requirements=job.education_requirements,
-                required_certifications=job.required_certifications,
-                salary_range=job.salary_range,
-                job_type=job.job_type,
-                seniority_level=job.seniority_level,
-                remote_friendly=job.remote_friendly
-            )
+            job=create_job_response(job)
         )
 
     except HTTPException:
@@ -316,27 +345,7 @@ async def list_jobs(
             JobDescription.user_id == current_user.id
         ).order_by(JobDescription.created_at.desc()).all()
         
-        job_responses = [
-            JobResponse(
-                id=job.id,
-                title=job.title,
-                company=job.company,
-                location=job.location,
-                source_link=job.source_link,
-                source_type=job.source_type,
-                processing_status=job.processing_status,
-                created_at=job.created_at.isoformat(),
-                extracted_skills=job.extracted_skills,
-                experience_requirements=job.experience_requirements,
-                education_requirements=job.education_requirements,
-                required_certifications=job.required_certifications,
-                salary_range=job.salary_range,
-                job_type=job.job_type,
-                seniority_level=job.seniority_level,
-                remote_friendly=job.remote_friendly
-            )
-            for job in jobs
-        ]
+        job_responses = [create_job_response(job) for job in jobs]
         
         return JobListResponse(
             jobs=job_responses,
@@ -369,24 +378,7 @@ async def get_job(
                 detail="Job description not found"
             )
         
-        return JobResponse(
-            id=job.id,
-            title=job.title,
-            company=job.company,
-            location=job.location,
-            source_link=job.source_link,
-            source_type=job.source_type,
-            processing_status=job.processing_status,
-            created_at=job.created_at.isoformat(),
-            extracted_skills=job.extracted_skills,
-            experience_requirements=job.experience_requirements,
-            education_requirements=job.education_requirements,
-            required_certifications=job.required_certifications,
-            salary_range=job.salary_range,
-            job_type=job.job_type,
-            seniority_level=job.seniority_level,
-            remote_friendly=job.remote_friendly
-        )
+        return create_job_response(job)
         
     except HTTPException:
         raise
