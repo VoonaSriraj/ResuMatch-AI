@@ -15,6 +15,8 @@ from app.models.activity_log import ActivityLog
 from app.utils.auth import get_current_active_user
 from app.services.linkedin_service import linkedin_service
 from app.services.match_engine import match_engine_service
+from app.services.job_service import JobService
+from app.services.adzuna_service import AdzunaJobService
 from app.utils.logger import get_logger
 from app.config import settings
 
@@ -86,27 +88,127 @@ async def search_and_recommend_jobs(
                 detail="No processed resume found. Please upload and process your resume first."
             )
         
-        # Search jobs on LinkedIn
-        jobs_data = await linkedin_service.search_jobs(
-            access_token=current_user.linkedin_access_token or "dev-token",
-            keywords=request.keywords,
-            location=request.location,
-            experience_level=request.experience_level,
-            job_type=request.job_type,
-            limit=request.limit or 25
-        )
+        # Search jobs - try LinkedIn first, then fallback to RapidAPI
+        jobs_data = []
+        
+        try:
+            if current_user.linkedin_access_token or settings.debug:
+                # Try LinkedIn service first
+                jobs_data = await linkedin_service.search_jobs(
+                    access_token=current_user.linkedin_access_token or "dev-token",
+                    keywords=request.keywords,
+                    location=request.location,
+                    experience_level=request.experience_level,
+                    job_type=request.job_type,
+                    limit=request.limit or 25
+                )
+                logger.info(f"LinkedIn service returned {len(jobs_data)} jobs")
+            else:
+                logger.info("No LinkedIn access token, using RapidAPI fallback")
+                
+        except Exception as e:
+            logger.warning(f"LinkedIn service failed: {str(e)}, falling back to RapidAPI")
+        
+        # If LinkedIn failed or returned no results, use Adzuna API
+        if not jobs_data:
+            try:
+                # Use Adzuna API for real-time jobs
+                adzuna_service = AdzunaJobService()
+                adzuna_jobs = await adzuna_service.search_jobs(
+                    keywords=request.keywords,
+                    location=request.location,
+                    limit=request.limit or 25
+                )
+                
+                # Convert Adzuna format to LinkedIn format for compatibility
+                jobs_data = []
+                for job in adzuna_jobs:
+                    jobs_data.append({
+                        "linkedin_job_id": job.get("job_id", ""),
+                        "title": job.get("title", ""),
+                        "company": job.get("company", ""),
+                        "location": job.get("location", ""),
+                        "description": job.get("description", ""),
+                        "apply_url": job.get("apply_url", ""),
+                        "skills": job.get("skills_required", []),
+                        "salary_range": job.get("salary_range"),
+                        "employment_type": job.get("job_type"),
+                        "seniority_level": job.get("seniority_level"),
+                        "job_type": job.get("job_type")
+                    })
+                
+                logger.info(f"Adzuna API returned {len(jobs_data)} real-time jobs")
+                
+            except Exception as e:
+                logger.error(f"Adzuna API failed: {str(e)}, trying JobService fallback")
+                # Final fallback to JobService
+                try:
+                    job_service = JobService()
+                    rapidapi_jobs = await job_service.fetch_jobs_from_rapidapi(
+                        keywords=request.keywords,
+                        location=request.location,
+                        limit=request.limit or 25
+                    )
+                    
+                    # Convert RapidAPI format to LinkedIn format for compatibility
+                    jobs_data = []
+                    for job in rapidapi_jobs:
+                        jobs_data.append({
+                            "linkedin_job_id": job.get("linkedin_job_id", ""),
+                            "title": job.get("title", ""),
+                            "company": job.get("company", ""),
+                            "location": job.get("location", ""),
+                            "description": job.get("description", ""),
+                            "apply_url": job.get("apply_url", ""),
+                            "skills": job.get("skills", []),
+                            "salary_range": job.get("salary_range"),
+                            "employment_type": job.get("employment_type"),
+                            "seniority_level": job.get("seniority_level"),
+                            "job_type": job.get("job_type")
+                        })
+                    logger.info(f"JobService fallback returned {len(jobs_data)} jobs")
+                except Exception as e:
+                    logger.error(f"JobService fallback also failed: {str(e)}")
+                    raise HTTPException(
+                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                        detail="Failed to fetch jobs from all sources"
+                    )
         
         # Calculate match scores for each job
         jobs_with_scores = []
         for job_data in jobs_data:
             try:
+                # Parse resume skills and experience from JSON strings
+                import json
+                def parse_json_field(value):
+                    if value is None:
+                        return []
+                    if isinstance(value, str):
+                        try:
+                            # Try to parse as JSON first
+                            parsed = json.loads(value)
+                            if isinstance(parsed, list):
+                                return parsed
+                            else:
+                                return [parsed]
+                        except (json.JSONDecodeError, TypeError):
+                            # If not JSON, split by spaces and clean up
+                            if isinstance(value, str) and value.strip():
+                                # Split by spaces and filter out empty strings
+                                skills = [skill.strip() for skill in value.split() if skill.strip()]
+                                return skills
+                            return []
+                    elif isinstance(value, list):
+                        return value
+                    return []
+                
                 # Calculate match score using the resume
                 match_result = await match_engine_service.calculate_comprehensive_match_score(
                     resume_text=latest_resume.extracted_text or "",
                     job_text=job_data.get("description", ""),
-                    resume_skills=latest_resume.parsed_skills or [],
-                    resume_experience=latest_resume.parsed_experience or [],
-                    job_skills=[],  # LinkedIn doesn't always provide skills
+                    resume_skills=parse_json_field(latest_resume.parsed_skills),
+                    resume_experience=parse_json_field(latest_resume.parsed_experience),
+                    job_skills=job_data.get("skills", []),  # Use skills from job data
                     job_requirements=[]  # Would need to parse from description
                 )
                 
@@ -145,7 +247,8 @@ async def search_and_recommend_jobs(
                     job_type=job_data.get("employment_type"),
                     seniority_level=job_data.get("seniority_level"),
                     remote_friendly=job_data.get("job_type"),
-                    posted_date=job_data.get("posted_date")
+                    posted_date=None,  # Will be set to current time automatically
+                    application_deadline=None
                 )
                 
                 db.add(recommended_job)
