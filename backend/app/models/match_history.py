@@ -2,7 +2,7 @@
 Match history model for storing resume-job matching results
 """
 
-from sqlalchemy import Column, Integer, String, DateTime, Text, ForeignKey, ARRAY, Float
+from sqlalchemy import Column, Integer, String, DateTime, Text, ForeignKey, Float
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 from app.database import Base
@@ -17,15 +17,15 @@ class MatchHistory(Base):
     
     # Matching results
     match_score = Column(Float, nullable=False)  # 0-100
-    missing_keywords = Column(ARRAY(String), nullable=True)
-    matching_keywords = Column(ARRAY(String), nullable=True)
-    missing_skills = Column(ARRAY(String), nullable=True)
-    matching_skills = Column(ARRAY(String), nullable=True)
+    missing_keywords = Column(Text, nullable=True)  # JSON string
+    matching_keywords = Column(Text, nullable=True)  # JSON string
+    missing_skills = Column(Text, nullable=True)  # JSON string
+    matching_skills = Column(Text, nullable=True)  # JSON string
     
     # AI-generated optimized resume
     optimized_resume_text = Column(Text, nullable=True)
-    optimization_suggestions = Column(ARRAY(String), nullable=True)
-    improvement_areas = Column(ARRAY(String), nullable=True)
+    optimization_suggestions = Column(Text, nullable=True)  # JSON string
+    improvement_areas = Column(Text, nullable=True)  # JSON string
     
     # Detailed analysis
     experience_match_score = Column(Float, nullable=True)

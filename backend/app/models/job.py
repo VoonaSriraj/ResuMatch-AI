@@ -2,7 +2,7 @@
 Job description model for storing job postings and parsed requirements
 """
 
-from sqlalchemy import Column, Integer, String, DateTime, Text, ForeignKey, ARRAY, Float
+from sqlalchemy import Column, Integer, String, DateTime, Text, ForeignKey, Float
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 from app.database import Base
@@ -22,10 +22,10 @@ class JobDescription(Base):
     file_type = Column(String(50), nullable=True)  # pdf, docx, doc, txt
     
     # Parsed data from AI
-    extracted_skills = Column(ARRAY(String), nullable=True)
-    experience_requirements = Column(ARRAY(String), nullable=True)
-    education_requirements = Column(ARRAY(String), nullable=True)
-    required_certifications = Column(ARRAY(String), nullable=True)
+    extracted_skills = Column(Text, nullable=True)  # JSON string
+    experience_requirements = Column(Text, nullable=True)  # JSON string
+    education_requirements = Column(Text, nullable=True)  # JSON string
+    required_certifications = Column(Text, nullable=True)  # JSON string
     salary_range = Column(String(100), nullable=True)
     job_type = Column(String(50), nullable=True)  # full-time, part-time, contract, etc.
     seniority_level = Column(String(50), nullable=True)  # entry, mid, senior, executive
