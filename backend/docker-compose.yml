@@ -7,15 +7,18 @@ services:
       POSTGRES_USER: jobalign
       POSTGRES_PASSWORD: jobalign_password
       POSTGRES_DB: jobalign
+      POSTGRES_INITDB_ARGS: "--encoding=UTF-8 --lc-collate=C --lc-ctype=C"
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U jobalign"]
+      test: ["CMD-SHELL", "pg_isready -U jobalign -d jobalign"]
       interval: 10s
       timeout: 5s
       retries: 5
+    restart: unless-stopped
 
   backend:
     build: .
