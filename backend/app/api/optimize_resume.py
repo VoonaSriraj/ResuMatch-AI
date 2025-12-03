@@ -34,6 +34,15 @@ class ResumeOptimizationResponse(BaseModel):
     improvement_score: float
     processing_status: str
 
+class ResumeAtsEvaluationResponse(BaseModel):
+    structure_score: float
+    keyword_score: float
+    skills_score: float
+    readability_score: float
+    impact_score: float
+    overall_ats_score: float
+    recommendations: list
+
 @router.post("/optimize", response_model=ResumeOptimizationResponse)
 async def optimize_resume_for_job(
     request: ResumeOptimizationRequest,
@@ -107,6 +116,77 @@ async def optimize_resume_for_job(
         db.commit()
         
         logger.info(f"Resume optimized for user {current_user.id} - Score improved by {optimization_result.get('improvement_score', 0):.1f}%")
+        
+        return ResumeOptimizationResponse(
+            optimized_resume_text=optimization_result.get("optimized_resume_text", resume.extracted_text),
+            changes_made=optimization_result.get("changes_made", []),
+            keywords_added=optimization_result.get("keywords_added", []),
+            improvements=optimization_result.get("improvements", []),
+            original_score=optimization_result.get("original_score", 0),
+            optimized_score=optimization_result.get("optimized_score", 0),
+            improvement_score=optimization_result.get("improvement_score", 0),
+            processing_status=optimization_result.get("processing_status", "completed")
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Resume optimization failed: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Resume optimization failed"
+        )
+
+@router.post("/evaluate", response_model=ResumeAtsEvaluationResponse)
+async def evaluate_resume_ats(
+    resume_id: int,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """Evaluate a single resume for ATS readiness and quality (no JD needed)."""
+    try:
+        resume = db.query(Resume).filter(
+            Resume.id == resume_id,
+            Resume.user_id == current_user.id
+        ).first()
+
+        if not resume:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Resume not found"
+            )
+
+        if resume.processing_status != "completed" or not resume.extracted_text:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Resume is not fully processed or text is missing"
+            )
+
+        result = await match_engine_service.evaluate_resume_ats(resume.extracted_text)
+
+        # Log activity
+        activity = ActivityLog(
+            user_id=current_user.id,
+            action_type="resume_ats_evaluation",
+            description=f"ATS evaluation completed with score {result.get('overall_ats_score', 0):.1f}%",
+            meta_data={
+                "resume_id": resume.id,
+                "overall_ats_score": result.get("overall_ats_score", 0)
+            }
+        )
+        db.add(activity)
+        db.commit()
+
+        return ResumeAtsEvaluationResponse(**result)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"ATS evaluation failed: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="ATS evaluation failed"
+        )
         
         return ResumeOptimizationResponse(
             optimized_resume_text=optimization_result.get("optimized_resume_text", resume.extracted_text),

@@ -4,7 +4,7 @@ AI Interview preparation endpoints for generating questions and tips
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 from pydantic import BaseModel
 
 from app.database import get_db
@@ -37,14 +37,33 @@ class InterviewQuestionsResponse(BaseModel):
     job_context: dict
     processing_status: str
 
+class InterviewQAResponse(BaseModel):
+    qa: List[dict]
+    extracted: dict
+    job_context: dict
+    processing_status: str
+
+class QAItem(BaseModel):
+    question: str
+    key_points: List[str] = []
+    tailoring_tips: List[str] = []
+    answer_text: str = ""
+
+class QuestionsWithAnswersResponse(BaseModel):
+    items: List[QAItem]
+    job_context: dict
+    processing_status: str
+
 class FollowUpQuestionsRequest(BaseModel):
     question: str
     job_context: dict
 
 class AnswerSuggestionRequest(BaseModel):
     question: str
-    user_experience: str
-    job_context: dict
+    user_experience: str = ""
+    job_id: Optional[int] = None
+    job_text: Optional[str] = None
+    job_context: Optional[Dict[str, Any]] = None
 
 @router.post("/generate", response_model=InterviewQuestionsResponse)
 async def generate_interview_questions(
@@ -143,6 +162,124 @@ async def generate_interview_questions(
             detail="Failed to generate interview questions"
         )
 
+@router.post("/generate-with-answers", response_model=QuestionsWithAnswersResponse)
+async def generate_with_answers(
+    request: InterviewQuestionsRequest,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """Generate technical questions with AI-generated answers in a single call."""
+    try:
+        job_text = request.job_text
+        job_title = request.job_title
+        company = request.company
+        seniority_level = request.seniority_level
+
+        if request.job_id:
+            job = db.query(JobDescription).filter(
+                JobDescription.id == request.job_id,
+                JobDescription.user_id == current_user.id
+            ).first()
+            if not job:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job description not found")
+            if job.processing_status != "completed":
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Job description is not fully processed yet")
+            job_text = job_text or job.job_text
+            job_title = job_title or job.title
+            company = company or job.company
+            seniority_level = seniority_level or job.seniority_level
+
+        if not job_text:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Job description text is required")
+
+        result = await interview_engine_service.generate_questions_with_answers(
+            job_text=job_text,
+            job_title=job_title,
+            company=company,
+            seniority_level=seniority_level,
+        )
+        # Log activity (count items)
+        try:
+            activity = ActivityLog(
+                user_id=current_user.id,
+                action_type="interview_qna_generation",
+                description=f"Interview QnA generated for {job_title or 'job'} at {company or 'company'}",
+                meta_data={
+                    "job_id": request.job_id,
+                    "job_title": job_title,
+                    "company": company,
+                    "items_count": len(result.get("items", [])),
+                }
+            )
+            db.add(activity)
+            db.commit()
+        except Exception:
+            pass
+
+        return QuestionsWithAnswersResponse(
+            items=result.get("items", []),
+            job_context=result.get("job_context", {}),
+            processing_status=result.get("processing_status", "completed")
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Interview questions generation failed: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to generate interview questions"
+        )
+
+@router.post("/generate-qa", response_model=InterviewQAResponse)
+async def generate_interview_qa(
+    request: InterviewQuestionsRequest,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """Generate 10–15 Q&A pairs and extracted skills from a JD"""
+    try:
+        job_text = request.job_text
+        job_title = request.job_title
+        company = request.company
+        seniority_level = request.seniority_level
+
+        if request.job_id:
+            job = db.query(JobDescription).filter(
+                JobDescription.id == request.job_id,
+                JobDescription.user_id == current_user.id
+            ).first()
+            if not job:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job description not found")
+            if job.processing_status != "completed":
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Job description is not fully processed yet")
+            job_text = job_text or job.job_text
+            job_title = job_title or job.title
+            company = company or job.company
+            seniority_level = seniority_level or job.seniority_level
+
+        if not job_text:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Job description text is required")
+
+        result = await interview_engine_service.generate_qa_from_jd(
+            job_text=job_text,
+            job_title=job_title,
+            company=company,
+            seniority_level=seniority_level
+        )
+
+        return InterviewQAResponse(
+            qa=result.get("qa", []),
+            extracted=result.get("extracted", {}),
+            job_context=result.get("job_context", {}),
+            processing_status=result.get("processing_status", "completed")
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Interview Q&A generation failed: {str(e)}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to generate interview Q&A")
+
 @router.post("/follow-up")
 async def generate_follow_up_questions(
     request: FollowUpQuestionsRequest,
@@ -200,17 +337,32 @@ async def generate_answer_suggestions(
 ):
     """Generate answer suggestions for interview questions"""
     try:
-        if not request.question.strip() or not request.user_experience.strip():
+        if not request.question.strip():
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Question and user experience are required"
+                detail="Question is required"
             )
+        
+        # Resolve job text and context if job_id provided
+        resolved_job_text = request.job_text
+        resolved_context: Dict[str, Any] = request.job_context or {}
+        if request.job_id:
+            job = db.query(JobDescription).filter(
+                JobDescription.id == request.job_id,
+                JobDescription.user_id == current_user.id
+            ).first()
+            if job:
+                resolved_job_text = resolved_job_text or job.job_text
+                resolved_context.setdefault("job_title", job.title)
+                resolved_context.setdefault("company", job.company)
+                resolved_context.setdefault("seniority_level", job.seniority_level)
         
         # Generate answer suggestions
         answer_result = await interview_engine_service.generate_answer_suggestions(
             question=request.question,
             user_experience=request.user_experience,
-            job_context=request.job_context
+            job_context=resolved_context,
+            job_text=resolved_job_text or ""
         )
         
         # Log activity

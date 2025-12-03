@@ -16,9 +16,51 @@ from app.models.activity_log import ActivityLog
 from app.utils.auth import get_current_active_user
 from app.services.match_engine import match_engine_service
 from app.utils.logger import get_logger
+from app.config import settings
+import json
 
 router = APIRouter()
 logger = get_logger(__name__)
+
+# Helper function to parse JSON strings back to lists
+def parse_json_field(value):
+    """Parse a DB field that may be a JSON string or a list, and coerce items to strings.
+    This ensures downstream set/list operations don't fail on unhashable types like dicts.
+    """
+    def _to_string_list(items):
+        out = []
+        for item in items:
+            s = "" if item is None else str(item).strip()
+            if s:
+                out.append(s)
+        return out
+
+    if value is None:
+        return []
+
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+            if isinstance(parsed, list):
+                return _to_string_list(parsed)
+            # Single parsed value -> list of one string
+            return _to_string_list([parsed])
+        except (json.JSONDecodeError, TypeError):
+            # Not JSON; split conservatively on commas first, then spaces
+            raw = value.strip()
+            if not raw:
+                return []
+            if "," in raw:
+                parts = [p.strip() for p in raw.split(",") if p.strip()]
+                return _to_string_list(parts)
+            parts = [p.strip() for p in raw.split() if p.strip()]
+            return _to_string_list(parts)
+
+    if isinstance(value, list):
+        return _to_string_list(value)
+
+    # Any other type -> coerce to single string
+    return _to_string_list([value])
 
 # Pydantic models
 class MatchScoreRequest(BaseModel):
@@ -36,6 +78,9 @@ class MatchScoreResponse(BaseModel):
     missing_keywords: List[str]
     matching_keywords: List[str]
     suggestions: List[str]
+    ats_findings: Optional[List[str]] = None
+    readability: Optional[List[str]] = None
+    strengths: Optional[List[str]] = None
     breakdown: dict
     ai_confidence: float
     processing_status: str
@@ -89,15 +134,43 @@ async def calculate_match_score(
                 detail="Job description is not fully processed yet"
             )
         
+        # Validate that we have text content
+        resume_text = resume.extracted_text or ""
+        job_text = job.job_text or ""
+        
+        if not resume_text.strip():
+            logger.warning(f"Resume {resume.id} has empty extracted_text")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Resume text is empty. Please re-upload the resume."
+            )
+        
+        if not job_text.strip():
+            logger.warning(f"Job {job.id} has empty job_text")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Job description text is empty. Please re-upload the job description."
+            )
+        
+        logger.info(f"Calculating match score for resume {resume.id} and job {job.id}. Resume text length: {len(resume_text)}, Job text length: {len(job_text)}")
+        
         # Calculate match score
         match_result = await match_engine_service.calculate_comprehensive_match_score(
-            resume_text=resume.extracted_text or "",
-            job_text=job.job_text or "",
-            resume_skills=resume.parsed_skills or [],
-            resume_experience=resume.parsed_experience or [],
-            job_skills=job.extracted_skills or [],
-            job_requirements=job.experience_requirements or []
+            resume_text=resume_text,
+            job_text=job_text,
+            resume_skills=parse_json_field(resume.parsed_skills),
+            resume_experience=parse_json_field(resume.parsed_experience),
+            job_skills=parse_json_field(job.extracted_skills),
+            job_requirements=parse_json_field(job.experience_requirements)
         )
+        
+        logger.info(f"Match calculation completed. Overall score: {match_result.get('overall_match_score', 0)}, Skills: {match_result.get('skills_match_score', 0)}, Experience: {match_result.get('experience_match_score', 0)}")
+        
+        # Helper function to serialize lists for SQLite
+        def serialize_for_sqlite(value):
+            if isinstance(value, list):
+                return json.dumps(value, ensure_ascii=False)
+            return value
         
         # Create match history record
         match_history = MatchHistory(
@@ -105,8 +178,8 @@ async def calculate_match_score(
             resume_id=resume.id,
             job_id=job.id,
             match_score=match_result.get("overall_match_score", 0),
-            missing_keywords=match_result.get("missing_keywords", []),
-            matching_keywords=match_result.get("matching_keywords", []),
+            missing_keywords=serialize_for_sqlite(match_result.get("missing_keywords", [])),
+            matching_keywords=serialize_for_sqlite(match_result.get("matching_keywords", [])),
             experience_match_score=match_result.get("experience_match_score", 0),
             skills_match_score=match_result.get("skills_match_score", 0),
             keywords_match_score=match_result.get("keywords_match_score", 0),
@@ -145,6 +218,9 @@ async def calculate_match_score(
             missing_keywords=match_result.get("missing_keywords", []),
             matching_keywords=match_result.get("matching_keywords", []),
             suggestions=match_result.get("suggestions", []),
+            ats_findings=match_result.get("ats_findings"),
+            readability=match_result.get("readability"),
+            strengths=match_result.get("strengths"),
             breakdown=match_result.get("breakdown", {}),
             ai_confidence=match_result.get("ai_confidence", 0),
             processing_status=match_result.get("processing_status", "completed"),
@@ -154,10 +230,10 @@ async def calculate_match_score(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Match score calculation failed: {str(e)}")
+        logger.error("Match score calculation failed: %s", str(e), exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Match score calculation failed"
+            detail=(f"Match score calculation failed: {str(e)}" if settings.debug else "Match score calculation failed")
         )
 
 @router.post("/batch-calculate")
@@ -208,8 +284,8 @@ async def batch_calculate_matches(
                     "title": job.title,
                     "company": job.company,
                     "job_text": job.job_text or "",
-                    "required_skills": job.extracted_skills or [],
-                    "experience_requirements": job.experience_requirements or []
+                    "required_skills": parse_json_field(job.extracted_skills),
+                    "experience_requirements": parse_json_field(job.experience_requirements)
                 })
         
         # Calculate batch matches
@@ -227,8 +303,8 @@ async def batch_calculate_matches(
                     resume_id=resume.id,
                     job_id=result["job_id"],
                     match_score=result["match_score"],
-                    missing_keywords=result["details"].get("missing_keywords", []),
-                    matching_keywords=result["details"].get("matching_keywords", []),
+                    missing_keywords=serialize_for_sqlite(result["details"].get("missing_keywords", [])),
+                    matching_keywords=serialize_for_sqlite(result["details"].get("matching_keywords", [])),
                     experience_match_score=result["details"].get("experience_match_score", 0),
                     skills_match_score=result["details"].get("skills_match_score", 0),
                     keywords_match_score=result["details"].get("keywords_match_score", 0),
@@ -298,8 +374,8 @@ async def get_match_history(
                 skills_match_score=match.skills_match_score or 0,
                 experience_match_score=match.experience_match_score or 0,
                 keywords_match_score=match.keywords_match_score,
-                missing_keywords=match.missing_keywords or [],
-                matching_keywords=match.matching_keywords or [],
+                missing_keywords=parse_json_field(match.missing_keywords),
+                matching_keywords=parse_json_field(match.matching_keywords),
                 suggestions=[],  # Could be stored separately or regenerated
                 breakdown={},  # Could be parsed from detailed_analysis
                 ai_confidence=0,  # Could be calculated from stored data
@@ -346,8 +422,8 @@ async def get_match_details(
             skills_match_score=match.skills_match_score or 0,
             experience_match_score=match.experience_match_score or 0,
             keywords_match_score=match.keywords_match_score,
-            missing_keywords=match.missing_keywords or [],
-            matching_keywords=match.matching_keywords or [],
+            missing_keywords=parse_json_field(match.missing_keywords),
+            matching_keywords=parse_json_field(match.matching_keywords),
             suggestions=[],  # Could be stored separately
             breakdown={},  # Could be parsed from detailed_analysis
             ai_confidence=0,
