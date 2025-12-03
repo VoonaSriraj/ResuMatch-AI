@@ -1,0 +1,49 @@
+{
+  "buildCommand": "npm run build",
+  "devCommand": "vite",
+  "installCommand": "bun install",
+  "framework": "vite",
+  "outputDirectory": "dist",
+  "env": [
+    "VITE_API_BASE_URL",
+    "VITE_GOOGLE_CLIENT_ID",
+    "VITE_GOOGLE_REDIRECT_URI",
+    "VITE_GITHUB_CLIENT_ID",
+    "VITE_GITHUB_REDIRECT_URI"
+  ],
+  "rewrites": [
+    {
+      "source": "/api/:path*",
+      "destination": "https://your-backend-url.com/api/:path*"
+    }
+  ],
+  "headers": [
+    {
+      "source": "/api/:path*",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "no-cache, no-store, must-revalidate"
+        }
+      ]
+    },
+    {
+      "source": "/(.*)",
+      "headers": [
+        {
+          "key": "X-Content-Type-Options",
+          "value": "nosniff"
+        },
+        {
+          "key": "X-Frame-Options",
+          "value": "DENY"
+        },
+        {
+          "key": "X-XSS-Protection",
+          "value": "1; mode=block"
+        }
+      ]
+    }
+  ],
+  "regions": ["sfo1"]
+}
