@@ -85,7 +85,7 @@ export function AppSidebar() {
           </div>
           {open && (
             <div className="flex flex-col animate-fade-in">
-              <h2 className="text-lg font-bold text-sidebar-foreground">JobAlign AI</h2>
+              <h2 className="text-lg font-bold text-sidebar-foreground">ResuMatch</h2>
               <p className="text-xs text-muted-foreground">Your Career Assistant</p>
             </div>
           )}
