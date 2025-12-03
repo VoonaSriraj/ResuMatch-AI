@@ -85,11 +85,18 @@ export default function ResumeOptimizer() {
     }
     setAnalyzing(true);
     try {
-      // Try a resume-only insights endpoint; gracefully fallback to heuristics
+      // Call ATS evaluation endpoint; gracefully fallback to heuristics
       try {
-        const insights = await api.get(`/api/resume/insights/${effectiveResumeId}`);
-        setMissingKeywords(insights?.missing_keywords || []);
-        const imp = insights?.suggestions || insights?.improvement_suggestions || [];
+        const evalRes = await api.postJson('/api/optimize/evaluate', { resume_id: effectiveResumeId });
+        // Populate ATS score and strengths/weaknesses from AI (or rule-based fallback)
+        const ats = evalRes?.overall_ats_score;
+        setAtsScore(typeof ats === 'number' ? Math.round(Math.max(0, Math.min(100, ats))) : null);
+        const strengths: string[] = evalRes?.strengths || [];
+        const weaknessesList: string[] = evalRes?.weaknesses || evalRes?.recommendations || [];
+        setStrengthHighlights(strengths);
+        setWeaknesses(weaknessesList);
+        // Also surface basic suggestions/notes if present
+        const imp = evalRes?.recommendations || [];
         const enriched = imp.length ? imp : [];
         if (!enriched.length) {
           enriched.push('Quantify achievements with concrete metrics (%, $, time saved).');
@@ -99,28 +106,16 @@ export default function ResumeOptimizer() {
         enriched.push('Ensure consistent formatting: titles, dates, and bullet punctuation.');
         enriched.push('Group skills by category (Languages, Frameworks, Tools) for scanability.');
         setSuggestions(Array.from(new Set(enriched)));
-        setAtsFindings(insights?.ats_findings || [
+        setAtsFindings(evalRes?.ats_findings || [
           'Use standard headings and avoid images or tables.',
           'Ensure all keywords are in selectable text.',
         ]);
-        setReadabilityNotes(insights?.readability || [
+        setReadabilityNotes(evalRes?.readability || [
           'Use bullet points starting with action verbs.',
           'Target concise sentences and quantify impact.',
         ]);
-        setStrengthHighlights(insights?.strengths || []);
-        if (typeof insights?.overall_match_score === 'number') {
-          setMatchScore(Math.round(insights.overall_match_score));
-        } else if (typeof insights?.fit_score === 'number') {
-          setMatchScore(Math.round(insights.fit_score));
-        } else {
-          setMatchScore(null);
-        }
-        // Derive ATS score if backend provides or compute heuristically
-        const providedAts: number | undefined = insights?.ats_score;
-        setAtsScore(typeof providedAts === 'number' ? Math.max(0, Math.min(100, Math.round(providedAts))) : null);
-        // Build weaknesses if provided
-        const backendWeaknesses: string[] = insights?.weaknesses || [];
-        if (backendWeaknesses.length) setWeaknesses(backendWeaknesses);
+        // Do not show match score in ATS-only flow
+        setMatchScore(null);
       } catch (e) {
         // Heuristic fallback: estimate based on parsed content presence
         const basicAts = [
