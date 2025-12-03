@@ -10,6 +10,9 @@ import { api } from "@/lib/utils";
 
 export default function JobMatch() {
   const [matchScore, setMatchScore] = useState<number | null>(null);
+  const [skillsMatchScore, setSkillsMatchScore] = useState<number>(0);
+  const [experienceMatchScore, setExperienceMatchScore] = useState<number>(0);
+  const [keywordsMatchScore, setKeywordsMatchScore] = useState<number>(0);
   const [analyzing, setAnalyzing] = useState(false);
   const [resumeFile, setResumeFile] = useState<File | null>(null);
   const [jobDescFile, setJobDescFile] = useState<File | null>(null);
@@ -36,6 +39,17 @@ export default function JobMatch() {
       return;
     }
     setAnalyzing(true);
+    // Reset scores to show loading state
+    setMatchScore(null);
+    setSkillsMatchScore(0);
+    setExperienceMatchScore(0);
+    setKeywordsMatchScore(0);
+    setMissingKeywords([]);
+    setImprovementSuggestions([]);
+    setAtsFindings([]);
+    setReadabilityNotes([]);
+    setStrengthHighlights([]);
+    
     try {
       // 1) Upload resume -> get resume.id
       const resumeForm = new FormData();
@@ -52,25 +66,39 @@ export default function JobMatch() {
 
       // 3) Calculate match
       const match = await api.postJson('/api/match/calculate', { resume_id: resumeId, job_id: jobId });
-      setMatchScore(Math.round(match.overall_match_score));
+      
+      // Log the response for debugging
+      console.log('Match calculation response:', match);
+      
+      // Validate response
+      if (!match) {
+        throw new Error('No response from match calculation API');
+      }
+      
+      // Check if we got valid scores
+      const overallScore = match.overall_match_score ?? 0;
+      const skillsScore = match.skills_match_score ?? 0;
+      const experienceScore = match.experience_match_score ?? 0;
+      const keywordsScore = match.keywords_match_score ?? 0;
+      
+      if (overallScore === 0 && skillsScore === 0 && experienceScore === 0 && keywordsScore === 0) {
+        console.warn('All scores are 0. This might indicate an issue with the calculation.');
+      }
+      
+      setMatchScore(Math.round(overallScore));
+      setSkillsMatchScore(Math.round(skillsScore));
+      setExperienceMatchScore(Math.round(experienceScore));
+      setKeywordsMatchScore(Math.round(keywordsScore));
       setMissingKeywords(match.missing_keywords || []);
       setImprovementSuggestions(match.suggestions || []);
-      setAtsFindings(match.ats_findings || [
-        'Use standard section headings (Summary, Skills, Experience, Education, Projects).',
-        'Avoid images, text boxes, and unusual fonts; keep to simple PDF or DOCX.',
-        'Ensure keywords appear in plain text (not inside graphics).',
-      ]);
-      setReadabilityNotes(match.readability || [
-        'Prefer bullet points with action verbs (Implemented, Led, Optimized).',
-        'Use concise sentences (12–20 words) and consistent tense.',
-        'Quantify impact (e.g., Increased throughput by 25%).',
-      ]);
-      setStrengthHighlights(match.strengths || (
-        (match.overall_match_score >= 70)
-          ? ['Strong alignment with required skills.', 'Good coverage of experience relevant to the role.']
-          : ['Clear baseline skills present.', 'Room to emphasize accomplishments and metrics.']
-      ));
-      toast({ title: 'Analysis complete!', description: `Your match score is ${Math.round(match.overall_match_score)}%.` });
+      setAtsFindings(match.ats_findings || []);
+      setReadabilityNotes(match.readability || []);
+      setStrengthHighlights(match.strengths || []);
+      
+      toast({ 
+        title: 'Analysis complete!', 
+        description: `Your match score is ${Math.round(overallScore)}%.` 
+      });
 
       // 4) If a secondary resume is provided, run comparison
       if (secondaryResumeFile) {
@@ -89,7 +117,18 @@ export default function JobMatch() {
         setComparisonMissing({ primaryOnly: [], secondaryOnly: [] });
       }
     } catch (err: any) {
-      toast({ title: 'Analysis failed', description: err?.message || 'Please try again', variant: 'destructive' });
+      console.error('Match analysis error:', err);
+      const errorMessage = err?.response?.data?.detail || err?.message || 'Please try again. If the issue persists, check that both files were processed correctly.';
+      toast({ 
+        title: 'Analysis failed', 
+        description: errorMessage, 
+        variant: 'destructive' 
+      });
+      // Reset to show no results on error
+      setMatchScore(null);
+      setSkillsMatchScore(0);
+      setExperienceMatchScore(0);
+      setKeywordsMatchScore(0);
     } finally {
       setAnalyzing(false);
     }
@@ -241,15 +280,15 @@ export default function JobMatch() {
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div className="p-4 bg-gradient-card rounded-lg border border-border">
                 <p className="text-sm text-muted-foreground mb-1">Skills Match</p>
-                <p className="text-2xl font-bold text-foreground">82%</p>
+                <p className="text-2xl font-bold text-foreground">{skillsMatchScore}%</p>
               </div>
               <div className="p-4 bg-gradient-card rounded-lg border border-border">
                 <p className="text-sm text-muted-foreground mb-1">Experience Match</p>
-                <p className="text-2xl font-bold text-foreground">91%</p>
+                <p className="text-2xl font-bold text-foreground">{experienceMatchScore}%</p>
               </div>
               <div className="p-4 bg-gradient-card rounded-lg border border-border">
                 <p className="text-sm text-muted-foreground mb-1">Keyword Match</p>
-                <p className="text-2xl font-bold text-foreground">88%</p>
+                <p className="text-2xl font-bold text-foreground">{keywordsMatchScore}%</p>
               </div>
             </div>
 
