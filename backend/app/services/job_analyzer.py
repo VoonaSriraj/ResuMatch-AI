@@ -21,6 +21,20 @@ class JobAnalyzerService:
         """Create upload directory if it doesn't exist"""
         Path(self.upload_dir).mkdir(parents=True, exist_ok=True)
     
+    def flatten_complex_data(self, data: Any) -> Any:
+        """Flatten complex data structures to simple strings for SQLite storage"""
+        if isinstance(data, dict):
+            # Convert dict to a simple string representation
+            return str(data)
+        elif isinstance(data, list):
+            # Convert list to JSON string
+            import json
+            return json.dumps(data, ensure_ascii=False)
+        elif isinstance(data, (str, int, float, bool)):
+            return data
+        else:
+            return str(data)
+    
     async def extract_text_from_file(self, file_path: str, file_type: str) -> str:
         """Extract text from job description file"""
         file_type = file_type.lower()
@@ -105,7 +119,13 @@ class JobAnalyzerService:
                 "company": company,
                 "location": location,
                 "salary_info": salary_info,
-                "parsed_data": parsed_data,
+                "parsed_data": {
+                    "extracted_skills": self.flatten_complex_data(parsed_data.get("required_skills", [])),
+                    "experience_requirements": self.flatten_complex_data(parsed_data.get("experience_requirements", [])),
+                    "education_requirements": self.flatten_complex_data(parsed_data.get("education_requirements", [])),
+                    "required_certifications": self.flatten_complex_data(parsed_data.get("certifications", [])),
+                    "job_details": parsed_data.get("job_details", {})
+                },
                 "processing_status": "completed"
             }
             
@@ -150,7 +170,13 @@ class JobAnalyzerService:
                 "location": location,
                 "source_link": source_link,
                 "salary_info": salary_info,
-                "parsed_data": parsed_data,
+                "parsed_data": {
+                    "extracted_skills": self.flatten_complex_data(parsed_data.get("required_skills", [])),
+                    "experience_requirements": self.flatten_complex_data(parsed_data.get("experience_requirements", [])),
+                    "education_requirements": self.flatten_complex_data(parsed_data.get("education_requirements", [])),
+                    "required_certifications": self.flatten_complex_data(parsed_data.get("certifications", [])),
+                    "job_details": parsed_data.get("job_details", {})
+                },
                 "processing_status": "completed"
             }
             

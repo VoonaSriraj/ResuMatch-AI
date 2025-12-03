@@ -5,9 +5,13 @@ Resume parsing service for handling file uploads and text extraction
 import os
 import PyPDF2
 import docx
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from pathlib import Path
 import asyncio
+import tempfile
+import logging
+from pdf2image import convert_from_path
+import pytesseract
 from app.services.groq_service import groq_service
 from app.utils.logger import get_logger
 from app.utils.helpers import generate_unique_filename, validate_file_type, validate_file_size
@@ -18,23 +22,66 @@ class ResumeParserService:
     def __init__(self, upload_dir: str = "uploads"):
         self.upload_dir = upload_dir
         self.create_upload_directory()
+        # Configure Tesseract path if needed
+        # pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
     
     def create_upload_directory(self):
         """Create upload directory if it doesn't exist"""
         Path(self.upload_dir).mkdir(parents=True, exist_ok=True)
     
-    async def extract_text_from_pdf(self, file_path: str) -> str:
-        """Extract text from PDF file"""
+    async def extract_text_with_ocr(self, pdf_path: str) -> str:
+        """Extract text from PDF using OCR (for image-based PDFs)"""
         try:
+            # Create a temporary directory to store the images
+            with tempfile.TemporaryDirectory() as temp_dir:
+                # Convert PDF to images
+                images = convert_from_path(pdf_path, output_folder=temp_dir)
+                
+                # Extract text from each image
+                full_text = []
+                for i, image in enumerate(images):
+                    # Save the image temporarily
+                    temp_image_path = os.path.join(temp_dir, f"page_{i+1}.png")
+                    image.save(temp_image_path, 'PNG')
+                    
+                    # Extract text using Tesseract
+                    text = pytesseract.image_to_string(temp_image_path)
+                    full_text.append(text)
+                
+                return "\n".join(full_text).strip()
+                
+        except Exception as e:
+            logger.error(f"OCR text extraction failed: {str(e)}")
+            raise Exception(f"OCR processing failed: {str(e)}")
+    
+    async def extract_text_from_pdf(self, file_path: str) -> str:
+        """Extract text from PDF file with fallback to OCR if needed"""
+        try:
+            # First try standard text extraction
             text = ""
             with open(file_path, 'rb') as file:
                 pdf_reader = PyPDF2.PdfReader(file)
                 for page in pdf_reader.pages:
                     text += page.extract_text() + "\n"
+            
+            # If no text was extracted or the text is too short, try OCR
+            if not text.strip() or len(text.strip()) < 100:  # Arbitrary threshold
+                logger.info("Standard PDF extraction returned little or no text, trying OCR...")
+                ocr_text = await self.extract_text_with_ocr(file_path)
+                if ocr_text and len(ocr_text) > len(text):
+                    return ocr_text
+            
             return text.strip()
+            
         except Exception as e:
             logger.error(f"PDF text extraction failed: {str(e)}")
-            raise Exception(f"Failed to extract text from PDF: {str(e)}")
+            # Try OCR as a fallback
+            try:
+                logger.info("Falling back to OCR due to PDF extraction error")
+                return await self.extract_text_with_ocr(file_path)
+            except Exception as ocr_error:
+                logger.error(f"OCR fallback also failed: {str(ocr_error)}")
+                raise Exception(f"Failed to extract text from PDF: {str(e)}")
     
     async def extract_text_from_docx(self, file_path: str) -> str:
         """Extract text from DOCX file"""
@@ -51,7 +98,7 @@ class ResumeParserService:
     async def extract_text_from_txt(self, file_path: str) -> str:
         """Extract text from TXT file"""
         try:
-            with open(file_path, 'r', encoding='utf-8') as file:
+            with open(file_path, 'r', encoding='utf-8', errors='ignore') as file:
                 return file.read().strip()
         except Exception as e:
             logger.error(f"TXT text extraction failed: {str(e)}")
