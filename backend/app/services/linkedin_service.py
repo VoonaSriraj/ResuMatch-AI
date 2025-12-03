@@ -159,21 +159,57 @@ class LinkedInService:
     
     def _get_mock_job_data(self, keywords: List[str] = None, location: str = None, limit: int = 25) -> List[Dict[str, Any]]:
         """Generate mock job data for development/testing"""
-        mock_jobs = [
+        # More realistic job titles and descriptions
+        job_templates = [
             {
-                "linkedin_job_id": f"mock_job_{i}",
-                "title": f"Software Engineer - {keywords[0] if keywords else 'Python'}" if i % 3 == 0 else f"Data Scientist - {keywords[0] if keywords else 'Machine Learning'}" if i % 3 == 1 else f"Product Manager - {keywords[0] if keywords else 'Product'}" if i % 3 == 2 else f"Job Title {i}",
-                "company": f"Tech Company {i % 10 + 1}",
-                "location": location or f"City {i % 5 + 1}",
-                "description": f"This is a mock job description for position {i}. The role involves working with modern technologies and contributing to innovative projects.",
-                "apply_url": f"https://example.com/apply/{i}",
-                "posted_date": "2024-01-01T00:00:00Z",
-                "job_type": ["remote", "hybrid"][i % 2],
-                "seniority_level": ["entry", "mid", "senior"][i % 3],
-                "employment_type": "full-time"
+                "title": "Software Engineer",
+                "description": "We are looking for a skilled Software Engineer to join our development team. You will be responsible for designing, developing, and maintaining software applications using modern programming languages and frameworks. Experience with Python, JavaScript, React, and database technologies is required.",
+                "company": "TechCorp Solutions",
+                "skills": ["Python", "JavaScript", "React", "SQL", "Git"]
+            },
+            {
+                "title": "Data Scientist",
+                "description": "Join our data science team to analyze complex datasets and build machine learning models. You will work with Python, R, SQL, and various ML frameworks. Strong background in statistics, machine learning algorithms, and data visualization required.",
+                "company": "DataFlow Inc",
+                "skills": ["Python", "R", "SQL", "Machine Learning", "Statistics"]
+            },
+            {
+                "title": "Full Stack Developer",
+                "description": "We need a Full Stack Developer to build end-to-end web applications. You will work with frontend technologies like React/Vue.js and backend technologies like Node.js/Python. Experience with cloud platforms and DevOps practices is a plus.",
+                "company": "WebTech Solutions",
+                "skills": ["React", "Node.js", "Python", "AWS", "Docker"]
+            },
+            {
+                "title": "DevOps Engineer",
+                "description": "Looking for a DevOps Engineer to manage our cloud infrastructure and CI/CD pipelines. You will work with AWS/Azure, Docker, Kubernetes, and automation tools. Strong scripting skills in Python/Bash required.",
+                "company": "CloudScale Technologies",
+                "skills": ["AWS", "Docker", "Kubernetes", "Python", "Jenkins"]
+            },
+            {
+                "title": "Product Manager",
+                "description": "We are seeking a Product Manager to drive product strategy and work with cross-functional teams. You will define product requirements, work with engineering teams, and analyze user data. Technical background and experience with agile methodologies required.",
+                "company": "ProductVision Corp",
+                "skills": ["Product Management", "Agile", "Analytics", "User Research", "Strategy"]
             }
-            for i in range(min(limit, 25))
         ]
+        
+        mock_jobs = []
+        for i in range(min(limit, 25)):
+            template = job_templates[i % len(job_templates)]
+            mock_jobs.append({
+                "linkedin_job_id": f"mock_job_{i}",
+                "title": template["title"],
+                "company": template["company"],
+                "location": location or f"San Francisco, CA" if i % 3 == 0 else f"New York, NY" if i % 3 == 1 else f"Remote",
+                "description": template["description"],
+                "apply_url": f"https://www.linkedin.com/jobs/view/{3000000000 + i}",  # Real LinkedIn job ID format
+                "posted_date": None,  # Will be set to current time in database
+                "job_type": ["remote", "hybrid", "on-site"][i % 3],
+                "seniority_level": ["entry", "mid", "senior"][i % 3],
+                "employment_type": "full-time",
+                "salary_range": f"${80000 + i*5000}-${120000 + i*5000}",
+                "skills": template["skills"]
+            })
         
         return mock_jobs
     

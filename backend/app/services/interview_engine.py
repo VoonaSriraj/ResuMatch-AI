@@ -51,6 +51,23 @@ class InterviewEngineService:
                 "industry_questions": to_string_list(questions_data.get("industry_questions", [])),
                 "tips": to_string_list(questions_data.get("tips", [])),
             }
+
+            # Fallbacks when AI returns sparse results
+            if not normalized["technical_questions"]:
+                # Rely on Groq service's enriched fallbacks (skills-derived) already applied
+                normalized["technical_questions"] = []
+            if not normalized["behavioral_questions"]:
+                normalized["behavioral_questions"] = [
+                    "Tell me about a time you handled a difficult stakeholder.",
+                    "Describe a failure. What did you learn and change?",
+                    "Give an example of leading without authority."
+                ]
+            if not normalized["company_culture_questions"]:
+                normalized["company_culture_questions"] = [
+                    "What about our mission and products resonates with you?",
+                    "How do you prefer to receive and give feedback?",
+                    "What environment helps you do your best work?"
+                ]
             
             # Enhance with additional contextual questions
             enhanced_questions = self._enhance_questions(
@@ -94,6 +111,165 @@ class InterviewEngineService:
                 "processing_status": "failed",
                 "error": str(e)
             }
+
+    async def generate_qa_from_jd(
+        self,
+        job_text: str,
+        job_title: Optional[str] = None,
+        company: Optional[str] = None,
+        seniority_level: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Generate 10–15 Q&A pairs based on a JD and extract skills"""
+        try:
+            result = await groq_service.generate_interview_qa(job_text)
+            qa = result.get("qa", [])
+            extracted = result.get("extracted", {})
+            # Ensure minimum of 10 by adding generic but useful prompts if needed
+            while len(qa) < 10:
+                fillers = [
+                    {"question": "Describe a recent project aligned with this JD.", "sample_answer": "I led ... focusing on ... resulting in ..."},
+                    {"question": "How do you ensure code quality and reliability?", "sample_answer": "I use tests (unit/integration), code reviews, and CI checks ..."},
+                    {"question": "How did you optimize performance in a critical path?", "sample_answer": "Profiled with ..., identified bottleneck in ..., improved by ...%"}
+                ]
+                for f in fillers:
+                    if len(qa) >= 10:
+                        break
+                    qa.append(f)
+            return {
+                "qa": qa[:15],
+                "extracted": extracted,
+                "job_context": {"job_title": job_title, "company": company, "seniority_level": seniority_level},
+                "processing_status": "completed"
+            }
+        except Exception as e:
+            logger.error(f"Q&A generation failed: {str(e)}")
+            return {"qa": [], "extracted": {"core_skills": [], "languages": [], "tools_frameworks": [], "key_responsibilities": []}, "processing_status": "failed", "error": str(e)}
+
+    async def generate_questions_with_answers(
+        self,
+        job_text: str,
+        job_title: Optional[str] = None,
+        company: Optional[str] = None,
+        seniority_level: Optional[str] = None,
+        limit: int = 12,
+        job_id: Optional[int] = None
+    ) -> Dict[str, Any]:
+        """Generate technical interview questions along with AI-generated answers in one call."""
+        try:
+            logger.info(f"Starting to generate questions with answers for job_id: {job_id}")
+            
+            # First get the questions
+            qres = await self.generate_interview_questions(
+                job_text=job_text,
+                job_title=job_title,
+                company=company,
+                seniority_level=seniority_level,
+            )
+            
+            # Get questions from all categories
+            questions: List[str] = []
+            for category in ["technical_questions", "industry_questions", 
+                           "leadership_questions", "company_culture_questions", 
+                           "behavioral_questions"]:
+                questions.extend(qres.get(category, [])[:limit])
+                if len(questions) >= limit:
+                    questions = questions[:limit]
+                    break
+            
+            # If still no questions, use fallback questions
+            if not questions:
+                questions = [
+                    "Tell me about yourself and your experience.",
+                    "What interests you about this position?",
+                    "What are your strengths and weaknesses?",
+                    "Describe a challenging project you worked on.",
+                    "How do you handle tight deadlines?"
+                ][:limit]
+            
+            logger.info(f"Generated {len(questions)} questions, now generating answers...")
+
+            async def build(q: str) -> Dict[str, Any]:
+                try:
+                    # Generate answer for the question
+                    ans = await self.generate_answer_suggestions(
+                        question=q,
+                        user_experience="",
+                        job_context={
+                            "job_title": job_title,
+                            "company": company,
+                            "seniority_level": seniority_level,
+                            "job_text": job_text[:1000]  # Send first 1000 chars for context
+                        },
+                        job_text=job_text,
+                    )
+                    
+                    # Create a comprehensive answer by combining structure and key points
+                    answer_structure = ans.get("answer_structure", "")
+                    key_points = ans.get("key_points", [])
+                    tailoring_tips = ans.get("tailoring_tips", [])
+                    
+                    # Create a paragraph combining structure and top 3 key points
+                    answer_paragraph = answer_structure
+                    if key_points:
+                        answer_paragraph += " " + " ".join(key_points[:3])
+                    
+                    return {
+                        "question": q,
+                        "key_points": key_points[:5],  # Limit to top 5 key points
+                        "tailoring_tips": tailoring_tips[:3],  # Limit to top 3 tips
+                        "answer_text": answer_paragraph.strip(),
+                        "answer_structure": answer_structure,
+                        "processing_status": "completed"
+                    }
+                except Exception as e:
+                    logger.error(f"Error generating answer for question '{q}': {str(e)}")
+                    return {
+                        "question": q,
+                        "key_points": [],
+                        "tailoring_tips": [],
+                        "answer_text": "",
+                        "answer_structure": "",
+                        "processing_status": "failed",
+                        "error": str(e)
+                    }
+
+            # Process questions in batches to avoid rate limiting
+            batch_size = 3
+            results: List[Dict[str, Any]] = []
+            
+            for i in range(0, len(questions), batch_size):
+                batch = questions[i:i+batch_size]
+                batch_results = await asyncio.gather(
+                    *(build(q) for q in batch),
+                    return_exceptions=True
+                )
+                
+                # Process batch results
+                for result in batch_results:
+                    if isinstance(result, Exception):
+                        logger.error(f"Error in batch processing: {str(result)}")
+                        continue
+                    results.append(result)
+                
+                # Add a small delay between batches
+                if i + batch_size < len(questions):
+                    await asyncio.sleep(1)
+            
+            logger.info(f"Successfully generated answers for {len(results)} questions")
+            
+            return {
+                "items": results,
+                "job_context": {
+                    "job_title": job_title,
+                    "company": company,
+                    "seniority_level": seniority_level,
+                    "job_text": job_text[:500] + "..." if job_text else ""
+                },
+                "processing_status": "completed"
+            }
+        except Exception as e:
+            logger.error(f"Questions-with-answers generation failed: {str(e)}")
+            return {"items": [], "processing_status": "failed", "error": str(e)}
     
     async def generate_follow_up_questions(
         self, 
@@ -137,29 +313,32 @@ class InterviewEngineService:
         self, 
         question: str, 
         user_experience: str,
-        job_context: Dict[str, Any]
+        job_context: Dict[str, Any],
+        job_text: str = ""
     ) -> Dict[str, Any]:
         """Generate answer suggestions for interview questions based on user experience"""
         try:
             prompt = f"""
-            Generate answer suggestions for this interview question based on the user's experience:
+            Generate answer suggestions for this interview question.
             
             Question: {question}
             
-            User's Experience:
+            Job Description:
+            {job_text}
+            
+            Candidate Background (if provided):
             {user_experience}
             
             Job Context:
             - Title: {job_context.get('job_title', 'Not specified')}
             - Company: {job_context.get('company', 'Not specified')}
+            - Seniority: {job_context.get('seniority_level', 'Not specified')}
             
-            Provide:
-            1. A suggested answer structure (STAR method if applicable)
-            2. Key points to mention based on their experience
-            3. What to avoid saying
-            4. How to tailor the answer to this specific role
-            
-            Return as JSON with keys: structure, key_points, avoid_points, tailoring_tips
+            Provide JSON with:
+            - structure: brief outline (prefer STAR where applicable)
+            - key_points: 4-6 bullet ideas grounded in the JD
+            - avoid_points: 2-3 pitfalls to avoid
+            - tailoring_tips: 3-5 ways to tailor the answer for this role/company
             """
             
             result = await groq_service.parse_json_response(prompt)
