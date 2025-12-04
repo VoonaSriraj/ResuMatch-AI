@@ -1,8 +1,8 @@
-# JobAlign AI - Complete System Architecture Analysis
+# ResuMatch AI - Complete System Architecture Analysis
 
 ## 🏗️ System Architecture Overview
 
-JobAlign AI is a comprehensive career assistance platform built with modern web technologies, featuring AI-powered resume optimization, job matching, and interview preparation capabilities.
+ResuMatch AI is a comprehensive career assistance platform built with modern web technologies, featuring AI-powered resume optimization, job matching, and interview preparation capabilities.
 
 ### **Tech Stack Summary**
 - **Frontend**: React 18 + TypeScript + Vite + Tailwind CSS + shadcn/ui
